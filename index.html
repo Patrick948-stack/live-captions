@@ -117,11 +117,12 @@
     #lang-tag.show { opacity: 1; }
 
     #btn-settings {
-      background: none; border: none; color: #444; font-size: 17px;
-      padding: 3px 5px; border-radius: 6px; cursor: pointer;
-      transition: color 0.15s; flex-shrink: 0; font-weight: 400;
+      background: #1e1e1e; border: none; color: #888; font-size: 12px;
+      padding: 5px 10px; border-radius: 8px; cursor: pointer;
+      transition: color 0.15s, background 0.15s; flex-shrink: 0;
+      font-weight: 600; letter-spacing: 0.3px;
     }
-    #btn-settings.active, #btn-settings:hover { color: #999; }
+    #btn-settings.active, #btn-settings:hover { color: #fff; background: #2a2a2a; }
 
     /* ── Captions ── */
     #captions {
@@ -208,7 +209,7 @@
   </div>
   <div class="s-right">
     <span id="lang-tag"></span>
-    <button id="btn-settings" aria-label="Settings">⚙</button>
+    <button id="btn-settings" aria-label="Settings">API KEY</button>
   </div>
 </div>
 
@@ -441,13 +442,11 @@ Rules:
   }
 
   /* ── Web Speech API path (iOS Safari) ────────────────────────────────────── */
-  function startWebSpeech() {
-    wsRec = new SpeechRecognition();
-    wsRec.continuous      = true;
-    wsRec.interimResults  = true;
-    wsRec.lang            = 'en-GB';
-    wsRec.maxAlternatives = 1;
+  let wsRestartDelay  = 80;    // ms, grows on rapid restarts
+  let wsLastResultAt  = 0;     // timestamp of last result
+  let wsWatchdog      = null;  // timer id
 
+  function startWebSpeech() {
     let interimEl = document.getElementById('interim');
     if (!interimEl) {
       interimEl = document.createElement('div');
@@ -455,40 +454,79 @@ Rules:
       interimEl.style.cssText = 'color:#555;font-size:calc(var(--fs)*0.9);line-height:1.65;white-space:pre-wrap;word-break:break-word;margin-top:4px';
       $('captions').appendChild(interimEl);
     }
-    // Show immediately so the user knows the engine is initialising
-    interimEl.textContent = '·  ·  ·';
 
-    wsRec.onresult = e => {
-      let interim = '';
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const t = e.results[i][0].transcript;
-        if (e.results[i].isFinal) { appendSegment(t + ' '); interim = ''; }
-        else interim += t;
-      }
-      // Show partial words as they arrive; fall back to dots while waiting
-      interimEl.textContent = interim || '·  ·  ·';
-      $('captions').scrollTop = $('captions').scrollHeight;
-    };
-    wsRec.onerror = e => { if (e.error !== 'no-speech') showErr('Speech error: ' + e.error); };
-    wsRec.onend   = () => {
-      if (isListening) {
-        // Keep dots visible during the brief restart gap so words aren't
-        // silently missed; restart quickly to minimise the gap itself.
+    function spawnRec() {
+      if (!isListening) return;
+      wsRec = new SpeechRecognition();
+      wsRec.continuous      = true;
+      wsRec.interimResults  = true;
+      // Use the device language; fall back to en-US
+      wsRec.lang            = navigator.language || 'en-US';
+      wsRec.maxAlternatives = 1;
+
+      wsRec.onresult = e => {
+        wsLastResultAt = Date.now();
+        wsRestartDelay = 80;   // reset backoff on success
+        clearTimeout(wsWatchdog);
+        scheduleWatchdog(interimEl);
+
+        let interim = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const t = e.results[i][0].transcript;
+          if (e.results[i].isFinal) { appendSegment(t + ' '); interim = ''; }
+          else interim += t;
+        }
+        interimEl.textContent = interim || '·  ·  ·';
+        $('captions').scrollTop = $('captions').scrollHeight;
+      };
+
+      wsRec.onerror = e => {
+        if (e.error === 'not-allowed') {
+          showErr('Microphone access denied — check Settings → Safari → Microphone.');
+          stopListening();
+        }
+        // 'no-speech' and 'network' are transient; onend will restart
+      };
+
+      wsRec.onend = () => {
+        clearTimeout(wsWatchdog);
+        if (!isListening) {
+          interimEl.textContent = '';
+          setStatus('Ready · point mic at TV', '');
+          return;
+        }
         interimEl.textContent = '·  ·  ·';
-        setTimeout(() => { try { wsRec.start(); } catch (_) {} }, 80);
-      } else {
-        if (interimEl) interimEl.textContent = '';
-        setStatus('Ready · point mic at TV', '');
-      }
-    };
+        // Exponential backoff: rapid restarts get throttled by iOS
+        const delay = wsRestartDelay;
+        wsRestartDelay = Math.min(wsRestartDelay * 1.5, 3000);
+        setTimeout(spawnRec, delay);
+      };
 
-    wsRec.start();
-    isListening = true;
+      try { wsRec.start(); } catch (_) { setTimeout(spawnRec, 500); }
+      scheduleWatchdog(interimEl);
+    }
+
+    // Watchdog: if no audio for 8 s, recreate the recognition object entirely
+    function scheduleWatchdog(interimEl) {
+      clearTimeout(wsWatchdog);
+      wsWatchdog = setTimeout(() => {
+        if (!isListening) return;
+        try { wsRec.stop(); } catch (_) {}
+        // onend will restart via spawnRec
+      }, 8000);
+    }
+
+    isListening    = true;
+    wsRestartDelay = 80;
+    wsLastResultAt = Date.now();
     ghost.style.display = 'none';
     setStatus('Listening…', 'on');
-    langTag.textContent = 'EN-GB'; langTag.classList.add('show');
+    langTag.textContent = (navigator.language || 'EN').toUpperCase();
+    langTag.classList.add('show');
     btnStart.textContent = 'Stop'; btnStart.classList.add('stop');
+    interimEl.textContent = '·  ·  ·';
     requestWakeLock();
+    spawnRec();
   }
 
   /* ── Whisper path (Chrome / Desktop) ─────────────────────────────────────── */
@@ -530,6 +568,7 @@ Rules:
   function stopListening() {
     isListening = false;
     audioBuffer = [];
+    clearTimeout(wsWatchdog);  wsWatchdog = null;
     wsRec?.stop();             wsRec = null;
     processor?.disconnect();   processor = null;
     micStream?.getTracks().forEach(t => t.stop()); micStream = null;
