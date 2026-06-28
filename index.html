@@ -33,13 +33,71 @@
     .prog-track { width: 220px; height: 3px; background: #1e1e1e; border-radius: 2px; overflow: hidden; }
     #prog-fill { height: 100%; background: var(--accent); width: 0%; transition: width 0.3s; }
 
+    /* ── Settings panel ── */
+    #settings-overlay {
+      position: fixed; inset: 0; z-index: 39;
+      background: rgba(0,0,0,0.55);
+      opacity: 0; pointer-events: none; transition: opacity 0.25s;
+    }
+    #settings-overlay.open { opacity: 1; pointer-events: all; }
+
+    #settings-panel {
+      position: fixed; bottom: 0; left: 0; right: 0; z-index: 40;
+      background: #151515; border-top: 1px solid #242424;
+      border-radius: 16px 16px 0 0;
+      padding: 20px 20px 36px;
+      transform: translateY(100%);
+      transition: transform 0.28s cubic-bezier(0.4,0,0.2,1);
+    }
+    #settings-panel.open { transform: translateY(0); }
+
+    .s-panel-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 20px;
+    }
+    .s-panel-header h2 { font-size: 15px; font-weight: 700; color: #ccc; }
+
+    #btn-settings-close {
+      background: #222; color: #777; font-size: 16px;
+      width: 28px; height: 28px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; border: none; padding: 0; line-height: 1;
+      transition: color 0.15s;
+    }
+    #btn-settings-close:hover { color: #fff; }
+
+    .s-row { margin-bottom: 14px; }
+    .s-row label {
+      display: block; font-size: 11px; color: #555;
+      margin-bottom: 6px; letter-spacing: 0.4px; font-weight: 600;
+    }
+    .s-row input, .s-row textarea {
+      width: 100%; background: #1c1c1c; border: 1px solid #2a2a2a;
+      border-radius: 8px; color: #ddd; font-size: 14px;
+      padding: 10px 12px; outline: none; font-family: inherit;
+      transition: border-color 0.15s;
+    }
+    .s-row input:focus, .s-row textarea:focus { border-color: #444; }
+    .s-row textarea { resize: none; height: 68px; line-height: 1.5; }
+    .s-hint { font-size: 11px; color: #3a3a3a; margin-top: 5px; line-height: 1.5; }
+
+    #llm-badge {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 11px; color: #555; margin-top: 4px;
+    }
+    #llm-dot { width: 6px; height: 6px; border-radius: 50%; background: #333; flex-shrink: 0; }
+    #llm-badge.active #llm-dot { background: var(--accent); }
+    #llm-badge.active { color: #777; }
+
     /* ── Status bar ── */
     #status-bar {
       display: flex; align-items: center; justify-content: space-between;
       padding: 11px 16px; background: #111;
       border-bottom: 1px solid #1c1c1c; flex-shrink: 0;
     }
-    .s-left { display: flex; align-items: center; gap: 8px; }
+    .s-left  { display: flex; align-items: center; gap: 8px; }
+    .s-right { display: flex; align-items: center; gap: 8px; }
+
     #dot {
       width: 8px; height: 8px; border-radius: 50%;
       background: #2a2a2a; transition: background 0.3s; flex-shrink: 0;
@@ -58,6 +116,13 @@
     }
     #lang-tag.show { opacity: 1; }
 
+    #btn-settings {
+      background: none; border: none; color: #444; font-size: 17px;
+      padding: 3px 5px; border-radius: 6px; cursor: pointer;
+      transition: color 0.15s; flex-shrink: 0; font-weight: 400;
+    }
+    #btn-settings.active, #btn-settings:hover { color: #999; }
+
     /* ── Captions ── */
     #captions {
       flex: 1; overflow-y: auto; padding: 20px 18px 8px;
@@ -70,6 +135,7 @@
       color: #fff; font-size: var(--fs); line-height: 1.65;
       white-space: pre-wrap; word-break: break-word;
     }
+    #final span { transition: opacity 0.35s ease; }
 
     /* ── Error ── */
     #err {
@@ -114,13 +180,36 @@
   <p id="loader-msg">Loading…</p>
 </div>
 
+<!-- Settings -->
+<div id="settings-overlay"></div>
+<div id="settings-panel">
+  <div class="s-panel-header">
+    <h2>Settings</h2>
+    <button id="btn-settings-close" aria-label="Close settings">✕</button>
+  </div>
+  <div class="s-row">
+    <label>ANTHROPIC API KEY</label>
+    <input type="password" id="inp-api-key" placeholder="sk-ant-…" autocomplete="off" spellcheck="false">
+    <p class="s-hint">Stored in your browser only · sent only to Anthropic's servers</p>
+  </div>
+  <div class="s-row">
+    <label>VOCABULARY HINTS <span style="color:#444;font-weight:400">(optional)</span></label>
+    <textarea id="inp-keywords" placeholder="Names, brands, technical terms, acronyms…"></textarea>
+    <p class="s-hint">Comma or line separated. Helps AI correct domain-specific words.</p>
+  </div>
+  <div id="llm-badge"><span id="llm-dot"></span><span id="llm-status-text">AI correction: off (no API key)</span></div>
+</div>
+
 <!-- Status bar -->
 <div id="status-bar">
   <div class="s-left">
     <span id="dot"></span>
     <span id="status-text">Ready · point mic at TV</span>
   </div>
-  <span id="lang-tag"></span>
+  <div class="s-right">
+    <span id="lang-tag"></span>
+    <button id="btn-settings" aria-label="Settings">⚙</button>
+  </div>
 </div>
 
 <!-- Captions -->
@@ -168,6 +257,111 @@
   }
   $('btn-lg').onclick = () => { fs += 2; applyFs(); };
   $('btn-sm').onclick = () => { fs -= 2; applyFs(); };
+
+  /* ── Settings panel ─────────────────────────────────────────────────────── */
+  const settingsPanel   = $('settings-panel');
+  const settingsOverlay = $('settings-overlay');
+  const inpApiKey       = $('inp-api-key');
+  const inpKeywords     = $('inp-keywords');
+  const llmBadge        = $('llm-badge');
+
+  function openSettings() {
+    inpApiKey.value   = localStorage.getItem('lc-api-key')   || '';
+    inpKeywords.value = localStorage.getItem('lc-keywords')  || '';
+    settingsPanel.classList.add('open');
+    settingsOverlay.classList.add('open');
+    $('btn-settings').classList.add('active');
+  }
+
+  function closeSettings() {
+    localStorage.setItem('lc-api-key',  inpApiKey.value.trim());
+    localStorage.setItem('lc-keywords', inpKeywords.value.trim());
+    settingsPanel.classList.remove('open');
+    settingsOverlay.classList.remove('open');
+    $('btn-settings').classList.remove('active');
+    updateLlmBadge();
+  }
+
+  function updateLlmBadge() {
+    const hasKey = !!(localStorage.getItem('lc-api-key') || '').trim();
+    llmBadge.classList.toggle('active', hasKey);
+    $('llm-status-text').textContent = hasKey
+      ? 'AI correction: on (claude-haiku-4-5)'
+      : 'AI correction: off (no API key)';
+  }
+  updateLlmBadge();
+
+  $('btn-settings').onclick       = openSettings;
+  $('btn-settings-close').onclick = closeSettings;
+  settingsOverlay.onclick         = closeSettings;
+
+  /* ── LLM correction ─────────────────────────────────────────────────────── */
+  const SYSTEM_BASE = `You are an acoustic transcript corrector. You receive raw automatic speech recognition output and return only the corrected text — no commentary, no answers, no summarization.
+
+Rules:
+- Fix mishearings and homophones based on context
+- Correct obvious grammar errors caused by mis-transcription
+- Preserve the speaker's meaning and sentence structure exactly
+- Do NOT summarize, rephrase, or answer any question in the text
+- Do NOT add or remove any information
+- Output ONLY the corrected transcript text, nothing else`;
+
+  async function correctWithLLM(text) {
+    const apiKey = (localStorage.getItem('lc-api-key') || '').trim();
+    if (!apiKey) return text;
+
+    const keywords = (localStorage.getItem('lc-keywords') || '').trim();
+    const system = keywords
+      ? `${SYSTEM_BASE}\n\nVocabulary hints — correct to these spellings when phonetically similar: ${keywords}`
+      : SYSTEM_BASE;
+
+    try {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-ipc-access': 'true',
+        },
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5',
+          max_tokens: 200,
+          system,
+          messages: [{ role: 'user', content: text.trim() }],
+        }),
+      });
+      if (!res.ok) return text;
+      const data = await res.json();
+      const corrected = data?.content?.[0]?.text?.trim();
+      return corrected ? corrected + ' ' : text;
+    } catch {
+      return text;
+    }
+  }
+
+  /* ── Segment-based transcript ──────────────────────────────────────────── */
+  const MAX_SPANS = 30;
+
+  function appendSegment(rawText) {
+    ghost.style.display = 'none';
+
+    const span = document.createElement('span');
+    span.textContent = rawText;
+    span.style.opacity = '0.55';
+    finalEl.appendChild(span);
+
+    while (finalEl.children.length > MAX_SPANS) {
+      finalEl.removeChild(finalEl.firstChild);
+    }
+
+    $('captions').scrollTop = $('captions').scrollHeight;
+
+    correctWithLLM(rawText).then(corrected => {
+      span.textContent = corrected;
+      span.style.opacity = '1';
+    });
+  }
 
   /* ── Engine selection ───────────────────────────────────────────────────────
      iOS Safari cannot run Whisper WASM reliably (no SharedArrayBuffer even in
@@ -251,7 +445,7 @@
     wsRec = new SpeechRecognition();
     wsRec.continuous      = true;
     wsRec.interimResults  = true;
-    wsRec.lang            = 'en-GB';   // British English by default
+    wsRec.lang            = 'en-GB';
     wsRec.maxAlternatives = 1;
 
     let interimEl = document.getElementById('interim');
@@ -268,7 +462,7 @@
       let interim = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const t = e.results[i][0].transcript;
-        if (e.results[i].isFinal) { append(t + ' '); interim = ''; }
+        if (e.results[i].isFinal) { appendSegment(t + ' '); interim = ''; }
         else interim += t;
       }
       // Show partial words as they arrive; fall back to dots while waiting
@@ -356,7 +550,7 @@
           .replace(/<[^>]+>/g, '')
           .replace(/\[(?!Music|Applause|Laughter)[^\]]+\]/gi, '')
           .replace(/\s+/g, ' ').trim();
-        if (cleaned) append(cleaned + ' ');
+        if (cleaned) appendSegment(cleaned + ' ');
         if (out.language) { langTag.textContent = out.language.toUpperCase(); langTag.classList.add('show'); }
       }
     } catch (e) { showErr('Transcription error — try reloading: ' + (e.message || e)); }
@@ -364,16 +558,8 @@
     if (isListening) setStatus('Listening…', 'on');
   }
 
-  function append(text) {
-    finalEl.textContent += text;
-    if (finalEl.textContent.length > 2000) {
-      finalEl.textContent = finalEl.textContent.slice(-1500);
-    }
-    $('captions').scrollTop = $('captions').scrollHeight;
-  }
-
   $('btn-clear').onclick = () => {
-    finalEl.textContent = '';
+    finalEl.innerHTML = '';
     ghost.style.display = '';
     langTag.classList.remove('show');
   };
