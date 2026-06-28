@@ -169,8 +169,17 @@
   $('btn-lg').onclick = () => { fs += 2; applyFs(); };
   $('btn-sm').onclick = () => { fs -= 2; applyFs(); };
 
+  /* ── Engine selection ───────────────────────────────────────────────────────
+     iOS Safari cannot run Whisper WASM reliably (no SharedArrayBuffer even in
+     single-threaded mode). Use Apple's built-in Web Speech API on iOS and
+     Whisper on Chrome / Firefox / Desktop where WASM works.              ── */
+  const onIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const useWebSpeech = onIOS && !!SpeechRecognition;
+
   /* State */
   let transcriber  = null;
+  let wsRec        = null;   // Web Speech API recognition instance
   let isListening  = false;
   let isProcessing = false;
   let audioCtx     = null;
@@ -180,15 +189,14 @@
   let audioBuffer  = [];
   let wakeLock     = null;
 
-  const TARGET_SR     = 16000;
-  const CHUNK_SEC     = 5;
+  const TARGET_SR = 16000;
+  const CHUNK_SEC = 5;
 
-  /* Resample Float32Array from fromRate → TARGET_SR (linear interpolation) */
   function resample(input, fromRate) {
     if (fromRate === TARGET_SR) return input;
-    const ratio     = fromRate / TARGET_SR;
-    const outLen    = Math.round(input.length / ratio);
-    const out       = new Float32Array(outLen);
+    const ratio  = fromRate / TARGET_SR;
+    const outLen = Math.round(input.length / ratio);
+    const out    = new Float32Array(outLen);
     for (let i = 0; i < outLen; i++) {
       const pos  = i * ratio;
       const lo   = Math.floor(pos);
@@ -199,58 +207,103 @@
     return out;
   }
 
-  /* Load Whisper model */
-  async function loadModel() {
+  function rms(samples) {
+    let s = 0;
+    for (let i = 0; i < samples.length; i++) s += samples[i] * samples[i];
+    return Math.sqrt(s / samples.length);
+  }
+
+  /* ── Whisper model load ──────────────────────────────────────────────────── */
+  async function loadWhisperModel() {
     loader.classList.remove('hidden');
     loaderMsg.innerHTML = 'Downloading AI model…<br><span style="color:#333;font-size:12px">One-time ~145 MB · cached after</span>';
-
     const fileProgress = {};
-
     transcriber = await pipeline('automatic-speech-recognition', 'Xenova/whisper-base', {
       progress_callback(p) {
         if (p.status === 'progress' && p.file) {
           fileProgress[p.file] = p.progress;
-          const vals = Object.values(fileProgress);
-          const avg  = vals.reduce((a, b) => a + b, 0) / vals.length;
+          const avg = Object.values(fileProgress).reduce((a, b) => a + b, 0) / Object.values(fileProgress).length;
           progFill.style.width = avg.toFixed(0) + '%';
           loaderMsg.innerHTML  = `Downloading… ${avg.toFixed(0)}%<br><span style="color:#333;font-size:12px">One-time · cached after</span>`;
         }
-        if (p.status === 'ready') {
-          progFill.style.width = '100%';
-          loaderMsg.textContent = 'Ready!';
-        }
+        if (p.status === 'ready') { progFill.style.width = '100%'; loaderMsg.textContent = 'Ready!'; }
       }
     });
-
     loader.classList.add('hidden');
   }
 
-  /* Start / stop */
+  /* ── Start / stop ────────────────────────────────────────────────────────── */
   btnStart.addEventListener('click', async () => {
     if (isListening) stopListening(); else await startListening();
   });
 
   async function startListening() {
     clearErr();
-    if (!transcriber) {
-      try { await loadModel(); }
-      catch (e) { showErr('Failed to load model: ' + e.message); return; }
+    if (useWebSpeech) {
+      startWebSpeech();
+    } else {
+      await startWhisper();
+    }
+  }
+
+  /* ── Web Speech API path (iOS Safari) ────────────────────────────────────── */
+  function startWebSpeech() {
+    wsRec = new SpeechRecognition();
+    wsRec.continuous      = true;
+    wsRec.interimResults  = true;
+    wsRec.lang            = 'en-GB';   // British English by default
+    wsRec.maxAlternatives = 1;
+
+    let interimEl = document.getElementById('interim');
+    if (!interimEl) {
+      interimEl = document.createElement('div');
+      interimEl.id = 'interim';
+      interimEl.style.cssText = 'color:#555;font-style:italic;font-size:calc(var(--fs)*0.9);line-height:1.65;white-space:pre-wrap;word-break:break-word;margin-top:4px';
+      $('captions').appendChild(interimEl);
     }
 
+    wsRec.onresult = e => {
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) { append(t + ' '); }
+        else interim += t;
+      }
+      interimEl.textContent = interim;
+      $('captions').scrollTop = $('captions').scrollHeight;
+    };
+    wsRec.onerror = e => { if (e.error !== 'no-speech') showErr('Speech error: ' + e.error); };
+    wsRec.onend   = () => {
+      if (interimEl) interimEl.textContent = '';
+      if (isListening) setTimeout(() => { try { wsRec.start(); } catch (_) {} }, 250);
+      else { setStatus('Ready · point mic at TV', ''); }
+    };
+
+    wsRec.start();
+    isListening = true;
+    ghost.style.display = 'none';
+    setStatus('Listening…', 'on');
+    langTag.textContent = 'EN-GB'; langTag.classList.add('show');
+    btnStart.textContent = 'Stop'; btnStart.classList.add('stop');
+    requestWakeLock();
+  }
+
+  /* ── Whisper path (Chrome / Desktop) ─────────────────────────────────────── */
+  async function startWhisper() {
+    if (!transcriber) {
+      try { await loadWhisperModel(); }
+      catch (e) { showErr('Failed to load model: ' + e.message); return; }
+    }
     try {
       micStream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true }
       });
-    } catch {
-      showErr('Microphone access denied — allow mic and reload.');
-      return;
-    }
+    } catch { showErr('Microphone access denied — allow mic and reload.'); return; }
 
     audioCtx  = new AudioContext();
     nativeSR  = audioCtx.sampleRate;
     const src = audioCtx.createMediaStreamSource(micStream);
     processor = audioCtx.createScriptProcessor(4096, 1, 1);
-
     const samplesNeeded = nativeSR * CHUNK_SEC;
 
     processor.onaudioprocess = e => {
@@ -258,63 +311,46 @@
       const data = e.inputBuffer.getChannelData(0);
       for (let i = 0; i < data.length; i++) audioBuffer.push(data[i]);
       if (audioBuffer.length >= samplesNeeded && !isProcessing) {
-        const raw = new Float32Array(audioBuffer.splice(0, samplesNeeded));
-        processChunk(raw);
+        processChunk(new Float32Array(audioBuffer.splice(0, samplesNeeded)));
       }
     };
 
     src.connect(processor);
     processor.connect(audioCtx.destination);
-
     isListening = true;
     ghost.style.display = 'none';
     setStatus('Listening…', 'on');
-    btnStart.textContent = 'Stop';
-    btnStart.classList.add('stop');
+    btnStart.textContent = 'Stop'; btnStart.classList.add('stop');
     requestWakeLock();
   }
 
   function stopListening() {
     isListening = false;
     audioBuffer = [];
+    wsRec?.stop();             wsRec = null;
     processor?.disconnect();   processor = null;
     micStream?.getTracks().forEach(t => t.stop()); micStream = null;
     audioCtx?.close();         audioCtx = null;
     wakeLock?.release();       wakeLock = null;
     setStatus('Ready · point mic at TV', '');
-    btnStart.textContent = 'Start';
-    btnStart.classList.remove('stop');
-  }
-
-  function rms(samples) {
-    let s = 0;
-    for (let i = 0; i < samples.length; i++) s += samples[i] * samples[i];
-    return Math.sqrt(s / samples.length);
+    btnStart.textContent = 'Start'; btnStart.classList.remove('stop');
   }
 
   async function processChunk(raw) {
-    // Skip chunks that are silence or near-silence to avoid hallucinations
-    if (rms(raw) < 0.01) { isProcessing = false; return; }
-
+    if (rms(raw) < 0.002) { isProcessing = false; return; }
     isProcessing = true;
     setStatus('Transcribing…', 'proc');
     try {
-      const samples = resample(raw, nativeSR);
-      const out     = await transcriber(samples, { task: 'transcribe', return_timestamps: false });
+      const out = await transcriber(resample(raw, nativeSR), { task: 'transcribe', return_timestamps: false });
       if (out?.text) {
         const cleaned = out.text
-          .replace(/<[^>]+>/g, '')                                    // strip <i> and other HTML-like tokens
-          .replace(/\[(?!Music|Applause|Laughter)[^\]]+\]/gi, '')     // strip [noise] etc, keep [Music]
+          .replace(/<[^>]+>/g, '')
+          .replace(/\[(?!Music|Applause|Laughter)[^\]]+\]/gi, '')
           .replace(/\s+/g, ' ').trim();
-        if (cleaned) {
-          append(cleaned + ' ');
-        }
-        if (out.language) {
-          langTag.textContent = out.language.toUpperCase();
-          langTag.classList.add('show');
-        }
+        if (cleaned) append(cleaned + ' ');
+        if (out.language) { langTag.textContent = out.language.toUpperCase(); langTag.classList.add('show'); }
       }
-    } catch (e) { console.error(e); }
+    } catch (e) { showErr('Transcription error — try reloading: ' + (e.message || e)); }
     isProcessing = false;
     if (isListening) setStatus('Listening…', 'on');
   }
