@@ -23,8 +23,15 @@ function resample(input, fromRate) {
   return out;
 }
 
+function rms(samples) {
+  let s = 0;
+  for (let i = 0; i < samples.length; i++) s += samples[i] * samples[i];
+  return Math.sqrt(s / samples.length);
+}
+
 function cleanTranscript(text) {
   return text
+    .replace(/<[^>]+>/g, '')
     .replace(/\[(?!Music|Applause|Laughter)[^\]]+\]/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
@@ -33,6 +40,44 @@ function cleanTranscript(text) {
 function clampFontSize(n) {
   return Math.max(14, Math.min(44, n));
 }
+
+// ── rms() ─────────────────────────────────────────────────────────────────────
+
+describe('rms()', () => {
+  it('returns 0 for a silent (all-zero) buffer', () => {
+    assert.strictEqual(rms(new Float32Array(1000)), 0);
+  });
+
+  it('returns 1 for a constant full-scale signal of 1.0', () => {
+    const buf = new Float32Array(1000).fill(1.0);
+    assert.ok(Math.abs(rms(buf) - 1.0) < 1e-6);
+  });
+
+  it('returns 1 for a constant signal of −1.0 (negative full scale)', () => {
+    const buf = new Float32Array(1000).fill(-1.0);
+    assert.ok(Math.abs(rms(buf) - 1.0) < 1e-6);
+  });
+
+  it('returns ~0.707 for a ±1 square wave', () => {
+    const buf = new Float32Array(1000);
+    for (let i = 0; i < buf.length; i++) buf[i] = i % 2 === 0 ? 1.0 : -1.0;
+    assert.ok(Math.abs(rms(buf) - 1.0) < 1e-6);
+  });
+
+  it('is below the silence gate (0.002) for near-zero noise', () => {
+    const buf = new Float32Array(1000).fill(0.001);
+    assert.ok(rms(buf) < 0.002);
+  });
+
+  it('is above the silence gate (0.002) for audible signal', () => {
+    const buf = new Float32Array(1000).fill(0.1);
+    assert.ok(rms(buf) >= 0.002);
+  });
+
+  it('works correctly on a single-element array', () => {
+    assert.ok(Math.abs(rms(new Float32Array([0.5])) - 0.5) < 1e-6);
+  });
+});
 
 // ── resample() ────────────────────────────────────────────────────────────────
 
@@ -91,6 +136,22 @@ describe('resample()', () => {
 // ── cleanTranscript() ─────────────────────────────────────────────────────────
 
 describe('cleanTranscript()', () => {
+  it('strips HTML-like tags such as <i>', () => {
+    assert.strictEqual(cleanTranscript('<i>text</i>'), 'text');
+  });
+
+  it('strips bare open tags like <i>', () => {
+    assert.strictEqual(cleanTranscript('<i> hello'), 'hello');
+  });
+
+  it('strips Whisper hallucination token <i> leaving empty string', () => {
+    assert.strictEqual(cleanTranscript('<i>'), '');
+  });
+
+  it('strips multiple different HTML tags', () => {
+    assert.strictEqual(cleanTranscript('<b>bold</b> and <em>italic</em>'), 'bold and italic');
+  });
+
   it('removes generic noise tags like [Background noise]', () => {
     assert.strictEqual(cleanTranscript('[Background noise] Hello'), 'Hello');
   });
