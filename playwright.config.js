@@ -1,4 +1,12 @@
 const { defineConfig, devices } = require('@playwright/test');
+const fs = require('fs');
+
+// Use an explicit executable path only when the binary actually exists there
+// (i.e. the Claude Code remote environment). In GitHub Actions CI, Playwright
+// installs its own Chromium via 'npx playwright install chromium' and must
+// discover it through its own channel — not a hardcoded path.
+const CHROMIUM_CANDIDATE = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || '/opt/pw-browsers/chromium';
+const chromiumExecutablePath = fs.existsSync(CHROMIUM_CANDIDATE) ? CHROMIUM_CANDIDATE : undefined;
 
 module.exports = defineConfig({
   testDir: './tests',
@@ -17,7 +25,7 @@ module.exports = defineConfig({
       use: {
         ...devices['Desktop Chrome'],
         launchOptions: {
-          executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || '/opt/pw-browsers/chromium',
+          ...(chromiumExecutablePath ? { executablePath: chromiumExecutablePath } : {}),
         },
       },
     },

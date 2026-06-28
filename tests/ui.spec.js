@@ -50,7 +50,7 @@ test.describe('Live Captions', () => {
           const proc = { connect: () => {}, disconnect: () => {} };
           setTimeout(() => {
             if (typeof proc.onaudioprocess === 'function') {
-              const buf = new Float32Array(220500 + 4096);
+              const buf = new Float32Array(220500 + 4096).fill(0.1);
               proc.onaudioprocess({ inputBuffer: { getChannelData: () => buf } });
             }
           }, 150);
