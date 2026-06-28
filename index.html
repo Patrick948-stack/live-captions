@@ -258,25 +258,34 @@
     if (!interimEl) {
       interimEl = document.createElement('div');
       interimEl.id = 'interim';
-      interimEl.style.cssText = 'color:#555;font-style:italic;font-size:calc(var(--fs)*0.9);line-height:1.65;white-space:pre-wrap;word-break:break-word;margin-top:4px';
+      interimEl.style.cssText = 'color:#555;font-size:calc(var(--fs)*0.9);line-height:1.65;white-space:pre-wrap;word-break:break-word;margin-top:4px';
       $('captions').appendChild(interimEl);
     }
+    // Show immediately so the user knows the engine is initialising
+    interimEl.textContent = '·  ·  ·';
 
     wsRec.onresult = e => {
       let interim = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const t = e.results[i][0].transcript;
-        if (e.results[i].isFinal) { append(t + ' '); }
+        if (e.results[i].isFinal) { append(t + ' '); interim = ''; }
         else interim += t;
       }
-      interimEl.textContent = interim;
+      // Show partial words as they arrive; fall back to dots while waiting
+      interimEl.textContent = interim || '·  ·  ·';
       $('captions').scrollTop = $('captions').scrollHeight;
     };
     wsRec.onerror = e => { if (e.error !== 'no-speech') showErr('Speech error: ' + e.error); };
     wsRec.onend   = () => {
-      if (interimEl) interimEl.textContent = '';
-      if (isListening) setTimeout(() => { try { wsRec.start(); } catch (_) {} }, 250);
-      else { setStatus('Ready · point mic at TV', ''); }
+      if (isListening) {
+        // Keep dots visible during the brief restart gap so words aren't
+        // silently missed; restart quickly to minimise the gap itself.
+        interimEl.textContent = '·  ·  ·';
+        setTimeout(() => { try { wsRec.start(); } catch (_) {} }, 80);
+      } else {
+        if (interimEl) interimEl.textContent = '';
+        setStatus('Ready · point mic at TV', '');
+      }
     };
 
     wsRec.start();
